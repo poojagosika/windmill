@@ -365,10 +365,15 @@ export async function cancelJob(
   });
 }
 
-const STRIP_COMMENTS =
-  /(\/\/.*$)|(\/\*[\s\S]*?\*\/)|(\s*=[^,\)]*(('(?:\\'|[^'\r\n])*')|("(?:\\"|[^"\r\n])*")))/gm;
+// One alternation so a `//` inside a string and a quote inside a comment are each
+// read as what they are. Strings become `""` so their commas and brackets cannot
+// split or close the parameter list.
+const COMMENTS_AND_STRINGS =
+  /\/\/.*$|\/\*[\s\S]*?\*\/|'(?:\\.|[^'\\\r\n])*'|"(?:\\.|[^"\\\r\n])*"|`(?:\\[\s\S]|[^`\\])*`/gm;
 function getParamNames(func: Function): string[] {
-  const fnStr = func.toString().replace(STRIP_COMMENTS, "");
+  const fnStr = func
+    .toString()
+    .replace(COMMENTS_AND_STRINGS, (m) => (m[0] === "/" ? "" : '""'));
   // Find the matching closing paren for the parameter list, handling nesting
   const openIdx = fnStr.indexOf("(");
   if (openIdx === -1) return [];
@@ -396,11 +401,13 @@ function getParamNames(func: Function): string[] {
   }
   if (current.trim()) params.push(current.trim());
   // Extract the parameter name from each param (strip type annotations, destructuring, rest)
+  let anon = 0;
   return params.map((p) => {
     // Remove rest operator
     p = p.replace(/^\.\.\./, "");
-    // For destructured params like { url, depth }: Config, use a positional fallback
-    if (p.startsWith("{") || p.startsWith("[")) return "";
+    // The script parser names an object pattern `anon<N>`, so a v1 task job binds it by that name
+    if (p.startsWith("{")) return `anon${++anon}`;
+    if (p.startsWith("[")) return "";
     p = p.split("=")[0];
     // Strip type annotation (e.g. "x: number" -> "x", "x?: string" -> "x")
     const colonIdx = p.indexOf(":");
